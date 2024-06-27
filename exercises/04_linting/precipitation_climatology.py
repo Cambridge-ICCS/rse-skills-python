@@ -1,33 +1,21 @@
-"""Routines for analysing precipitation climatology from ESM runs."""
-
-import json
 import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib.ticker as mticker
 import xarray as xr
+import scipy
+import cf_xarray
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
-from cartopy.mpl.gridliner import LONGITUDE_FORMATTER, LATITUDE_FORMATTER
 import cmocean
 import regionmask
 
 
+import matplotlib.ticker as mticker
+from cartopy.mpl.gridliner import LONGITUDE_FORMATTER, LATITUDE_FORMATTER
+
+
 def convert_precipitation_units(precipitation_in_kg_per_m_squared_s):
-    """
-    Convert precipitation units from [kg m-2 s-1] to [mm day-1].
+    """Convert kg m-2 s-1 to mm day-1."""
 
-    Parameters
-    ----------
-    precipitation_in_kg_per_m_squared_s : xarray.DataArray
-        xarray DataArray containing model precipitation data in kg m-2 s-1
-
-    Returns
-    -------
-    precipitation_in_mm_per_day : xarray.DataArray
-        the input DataArray with precipitation units modified to mm day-1
-    """
-    # density 1000 kg m-3 => 1 kg m-2 == 1 mm
-    # There are 60*60*24 = 86400 seconds per day
     precipitation_in_mm_per_day = xr.DataArray(
         precipitation_in_kg_per_m_squared_s * 86400
     )
@@ -42,22 +30,19 @@ def convert_precipitation_units(precipitation_in_kg_per_m_squared_s):
     return precipitation_in_mm_per_day
 
 
+def apply_mask(darray, sftlf_file, realm):
+    # Function to mask ocean or land using a sftlf (land surface fraction) file.
+    # Inputs:
+    #  darray: Data to mask
+    #  sftlf_file: Land surface fraction file
+    #  realm: Realm to mask
+
+    # This is now done using cartopy package with a single line.
+    pass
+
+
 def plot_zonally_averaged_precipitation(precipitation_data):
-    """
-    Plot zonally-averaged precipitation data and save to file.
-
-    Parameters
-    ----------
-    precipitation_data : xarray.DataSet
-        xarray DataSet containing precipitation model data, specifying precipitation in
-        [kg m-2 s-1] at given latitudes, longitudes and time. The Dataset should contain
-        four aligned DataArrays: precipitation, latitude, longitude and time.
-
-    Returns
-    -------
-    None
-
-    """
+    # print(data)
     zonal_precipitation = precipitation_data["pr"].mean("lon", keep_attrs=True)
 
     figure, axes = plt.subplots(nrows=4, ncols=1, figsize=(12, 8))
@@ -80,27 +65,9 @@ def plot_zonally_averaged_precipitation(precipitation_data):
     plt.savefig("zonal_map.png", dpi=200)  # Save figure to file
 
 
-def get_country_annual_average(precipitation_data, countries):
-    """
-    Calculate annual precipitation averages for countries and save to file.
-
-    Parameters
-    ----------
-    precipitation_data : xarray.DataSet
-        xarray DataSet containing precipitation model data, specifying precipitation in
-        [kg m-2 s-1] at given latitudes, longitudes and time. The Dataset should contain
-        four aligned DataArrays: precipitation, latitude, longitude and time.
-    countries : dict(str: str)
-        dictionary mapping country names to regionmask codes. For a list see:
-        regionmask.defined_regions.natural_earth_v5_0_0.countries_110.regions
-
-    Returns
-    -------
-    None
-
-    """
+def get_country_annual_average(data, countries):
     annual_average_precipitation = (
-        precipitation_data["pr"].groupby("time.year").mean("time", keep_attrs=True)
+        data["pr"].groupby("time.year").mean("time", keep_attrs=True)
     )
     annual_average_precipitation = convert_precipitation_units(
         annual_average_precipitation
@@ -110,48 +77,71 @@ def get_country_annual_average(precipitation_data, countries):
         annual_average_precipitation
     )
 
-    with open(
-        "annual_average_precipitation_by_country.txt", "w", encoding="utf-8"
-    ) as datafile:
+    # List possible locations to plot
+    # [print(k, v) for k, v in regionmask.defined_regions.natural_earth_v5_0_0.countries_110.regions.items()]
+
+    with open("annual_average_precipitation_by_country.txt", "w") as datafile:
         for country_name, country_code in countries.items():
+            # land.plot(ax=geo_axes, add_label=False, fc="white", lw=2, alpha=0.5)
+            # clim = clim.where(ocean == "South Pacific Ocean")
             country_annual_average_precipitation = annual_average_precipitation.where(
                 country_mask.cf == country_code
             )
+
+            # Debugging - plot countries to make sure mask works correctly
+            # fig, geo_axes = plt.subplots(nrows=1, ncols=1, figsize=(12,5),
+            #                 subplot_kw={'projection': ccrs.PlateCarree(central_longitude=180)})
+            # data_avg_mask.sel(year = 2010).plot.contourf(ax=geo_axes,
+            #                                       extend='max',
+            #                                       transform=ccrs.PlateCarree(),
+            #                                       cbar_kwargs={'label': data_avg_mask.units},
+            #                                       cmap=cmocean.cm.haline_r)
+            # geo_axes.add_feature(cfeature.COASTLINE, lw=0.5)
+            # gl = geo_axes.gridlines(crs=ccrs.PlateCarree(), draw_labels=True,
+            # linewidth=2, color='gray', alpha=0.5, linestyle='--')
+            # gl.top_labels = False
+            # gl.left_labels = True
+            # gl.xlocator = mticker.FixedLocator([-180, -90, 0, 90])
+            # gl.ylocator = mticker.FixedLocator([-66, -23, 0, 23, 66])
+            # gl.xformatter = LONGITUDE_FORMATTER
+            # gl.yformatter = LATITUDE_FORMATTER
+            # gl.xlabel_style = {'size': 15, 'color': 'gray'}
+            # gl.ylabel_style = {'size': 15, 'color': 'gray'}
+            # print("show %s" %k)
+            # plt.show()
 
             for year in country_annual_average_precipitation.year.values:
                 precipitation = (
                     country_annual_average_precipitation.sel(year=year).mean().values
                 )
                 datafile.write(
-                    f"{country_name.ljust(25)} {year} : {precipitation:2.3f} mm/day\n"
+                    "{} {} : {:2.3f} mm/day\n".format(
+                        country_name.ljust(25), year, precipitation
+                    )
                 )
             datafile.write("\n")
 
 
 def plot_enso_hovmoller_diagram(precipitation_data):
-    """
-    Plot Hovmöller diagram of equatorial precipitation to visualise ENSO.
-
-    Parameters
-    ----------
-    precipitation_data : xarray.DataSet
-       xarray DataSet containing precipitation model data, specifying precipitation in
-        [kg m-2 s-1] at given latitudes, longitudes and time. The Dataset should contain
-        four aligned DataArrays: precipitation, latitude, longitude and time.
-
-    Returns
-    -------
-    None
-
-    """
     enso = (
         precipitation_data["pr"]
         .sel(lat=slice(-1, 1))
         .sel(lon=slice(120, 280))
         .mean(dim="lat", keep_attrs=True)
     )
+    # print(enso)
+    # .groupby('time.year').mean('time', keep_attrs=True)
 
+    # # convert to dataframe:
+    # df = monthly_speed.reset_coords(drop=True).to_dataframe()
+    # # add year and month indices:
+    # df['month']=df.index.month
+    # df['year']=df.index.year
+    # # groupby month and year then mean:
+    # enso = enso.groupby(['time.year','time.month']).mean().unstack().T.droplevel(0)
+    # plot:
     enso.plot()
+
     plt.savefig("enso.png", dpi=200)  # Save figure to file
 
 
@@ -163,30 +153,22 @@ def create_precipitation_climatology_plot(
     plot_gridlines=False,
     levels=None,
 ):
-    """
-    Plot the precipitation climatology.
+    """Plot the precipitation climatology.
 
-    Parameters
-    ----------
     seasonal_average_precipitation : xarray.DataArray
         Precipitation climatology data. Seasonally averaged precipitation data.
     model_name : str
-        Name of the climate model
-    season : str
-        Climatological season (one of DJF, MAM, JJA, SON)
-    mask : optional str
-        mask to apply to plot (one of "land" or "ocean")
-    plot_gridlines : bool
+    season (str): Season
 
-        Select whether to plot gridlines
-    levels : list
-        Tick mark values for the colorbar
-
-    Returns
-    -------
-    None
+    plot_gridlines (bool): Select whether to plot gridlines
+    levels (list): Tick marks on the colorbar
 
     """
+
+    # fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(12,5), subplot_kw={'projection': "3d"})
+    # clim.sel(season=season).T.plot.surface()
+    # plt.show()
+
     if not levels:
         levels = np.arange(0, 13.5, 1.5)
 
@@ -211,6 +193,20 @@ def create_precipitation_climatology_plot(
     )  # Add coastines using cartopy feature
 
     if mask:
+        # Old approach of adding mask before combining into the below command.
+        # if mask == "ocean":
+        # old mask_feat = cfeature.NaturalEarthFeature("physical", "ocean", "110m")
+        # oldold geo_axes.add_feature(cfeature.NaturalEarthFeature("physical", "ocean", "110m"),
+        #                      ec="red", fc="yellow", lw=2, alpha=1.0)
+        # elif mask == "land":
+        # old mask_feat = cfeature.NaturalEarthFeature("physical", "land", "110m")
+        # oldold # geo_axes.add_feature(cfeature.NaturalEarthFeature("physical", "ocean", "110m"),
+        #                           ec="red", fc="yellow", lw=2, alpha=1.0)
+
+        # oldold else:
+        # oldold pass
+        # oldold raise ValueError("Unknown ")
+
         # Mask out (fade) using 110m resolution data from cartopy.
         geo_axes.add_feature(
             cfeature.NaturalEarthFeature("physical", mask, "110m"),
@@ -221,6 +217,7 @@ def create_precipitation_climatology_plot(
         )
 
     if plot_gridlines:
+        # If we want gridlines run the code to do this:
         gridlines = geo_axes.gridlines(
             crs=ccrs.PlateCarree(),
             draw_labels=True,
@@ -241,8 +238,9 @@ def create_precipitation_climatology_plot(
         gridlines.xlabel_style = {"size": 15, "color": "gray"}
         gridlines.ylabel_style = {"size": 15, "color": "gray"}
 
-    title = f"{model_name} precipitation climatology ({season})"
+    title = "{} precipitation climatology ({})".format(model_name, season)
     plt.title(title)
+    # print("\n\n{}\n\n".format(clim.mean()))
 
 
 def main(
@@ -252,36 +250,9 @@ def main(
     plot_gridlines=False,
     mask=None,
     cbar_levels=None,
-    countries=None,
+    countries={"United Kingdom": "GB"},
 ):
-    """
-    Run the program for producing precipitation plots.
-
-    Parameters
-    ----------
-    precipitation_netcdf_file : str
-        netCDF filename to read precipitation data from
-    season : optional str
-        Climatological season (one of DJF, MAM, JJA, SON)
-    output_file : optional str
-        filename to save main image to
-    plot_gridlines : optional bool
-        Select whether to plot gridlines
-    mask : optional str
-        mask to apply to plot (one of "land" or "ocean")
-    cbar_levels : optional list
-        Tick mark values for the colorbar
-    countries : optional dict(str: str)
-        dictionary mapping country names to regionmask codes. For a list see:
-        regionmask.defined_regions.natural_earth_v5_0_0.countries_110.regions
-
-    Returns
-    -------
-    None
-
-    """
-    if countries is None:
-        countries = {"United Kingdom": "GB"}
+    """Run the program."""
 
     precipitation_data = xr.open_dataset(precipitation_netcdf_file)
 
@@ -295,10 +266,10 @@ def main(
 
     try:
         input_units = seasonal_average_precipitation.attrs["units"]
-    except KeyError as exc:
+    except KeyError:
         raise KeyError(
             "Precipitation variable in {pr_file} must have a units attribute"
-        ) from exc
+        )
 
     if input_units == "kg m-2 s-1":
         seasonal_average_precipitation = convert_precipitation_units(
@@ -318,30 +289,32 @@ def main(
         levels=cbar_levels,
     )
 
-    plt.savefig(output_file, dpi=200)
+    plt.savefig(output_file, dpi=200)  # Save figure to file
 
 
 if __name__ == "__main__":
-    # Get config from command line
-    config_name = input("Enter configuration name: ")
-    if config_name == "":
-        print("Using default configuration in 'default_config.json'.")
-        config_name = "default_config"
-    else:
-        print(f"Using configuration in '{config_name}.json'.")
-    config_file = config_name + ".json"
-    with open(config_file, encoding="utf-8") as json_file:
-        config = json.load(json_file)
-
-    output_filename = f"{config_name}_output.png"
+    input_file = (
+        "../../data/pr_Amon_ACCESS-ESM1-5_historical_r1i1p1f1_gn_201001-201412.nc"
+    )
+    # season_to_plot = "DJF"
+    # season_to_plot = "MAM"
+    season_to_plot = "JJA"
+    # season_to_plot = "SON"
+    output_filename = "output.png"
     gridlines_on = True
-    colorbar_levels = None
+    mask_id = "ocean"
+    cbar_levels = None
+    countries = {
+        "United Kingdom": "GB",
+        "United States of America": "US",
+        "Antarctica": "AQ",
+        "South Africa": "ZA",
+    }
 
     main(
-        config["input_file"],
-        season=config["season_to_plot"],
-        output_file=output_filename,
-        mask=config["mask_id"],
-        plot_gridlines=config["gridlines_on"],
-        countries=config["countries_to_record"],
+        input_file,
+        season=season_to_plot,
+        mask=mask_id,
+        plot_gridlines=gridlines_on,
+        countries=countries,
     )
